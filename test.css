@@ -20,6 +20,14 @@ nav li a, .tester {
     font-weight: bold;
 }
 
+@media screen {
+    #logo {
+        top: 2px;
+        font-size: 43px;
+        width: 150px;
+    }
+}
+
 @media screen and (max-width: 768px) {
     #logo {
         top: 2px;
