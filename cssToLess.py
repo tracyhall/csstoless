@@ -1,8 +1,16 @@
 import tinycss
 import CSSMediaQueryParser
+import argparse
 from sys import argv
 
 script, f = argv
+ap = argparse.ArgumentParser(description='Translate a complex css file into a valid LESS file')
+ap.add_argument('input', help='CSS file to translate.')
+ap.add_argument('output', help='CSS output file.', default='output.css', nargs='?')
+ap.add_argument('-p', '--pretty', dest='format', help='Pretty print the output file.', action='store_true')
+ap.add_argument('-m', '--map', dest='varmap', help='Path to file with variable map.')
+args = ap.parse_args()
+print args
 
 parser = CSSMediaQueryParser.CSSMediaQueryParser()
 stylesheet = parser.parse_stylesheet_file(f)
@@ -12,7 +20,7 @@ output = ''
 at_rules = ''
 
 
-def addRule (sel, declarations, obj):
+def add_rule (sel, declarations, obj):
     sel = sel.strip()
     tokens = sel.split(' ')
     current_level = obj
@@ -25,7 +33,7 @@ def addRule (sel, declarations, obj):
     for dec in declarations:
         current_level[dec.name] = dec.value.as_css()
 
-def addMedia (media, rules):
+def add_media (media, rules):
     media = '@media ' + media
 
     if media not in dictRules:
@@ -34,14 +42,13 @@ def addMedia (media, rules):
     for rule in rules:
         sels = rule.selector.as_css().split(',')
         for sel in sels:
-            print sel
-            addRule(sel, rule.declarations, dictRules[media])
+            add_rule(sel, rule.declarations, dictRules[media])
 
-def generateLess (obj):
+def generate_less (obj):
     output = ''
     for key in obj:
         if type(obj[key]) == dict:
-            output = output + key + '{' + generateLess(obj[key]) + '}'
+            output = output + key + '{' + generate_less(obj[key]) + '}'
         else:
             output = output + key + ':' + obj[key] + ';'
     return output
@@ -54,17 +61,19 @@ def dump(obj):
 
 for rule in stylesheet.rules:
     if (rule.at_keyword == '@import'):
-        print rule
         at_rules = at_rules + rule.at_keyword + ' "' + rule.uri + '";'
     elif (rule.at_keyword == '@media'):
-        addMedia(rule.media, rule.rules)
+        add_media(rule.media, rule.rules)
     else:
         sels = rule.selector.as_css().split(',')
 
         for sel in sels:
-            addRule(sel, rule.declarations, dictRules)
+            add_rule(sel, rule.declarations, dictRules)
 
-output = at_rules + generateLess(dictRules)
+output = at_rules + generate_less(dictRules)
 
 print output
+
+with open('output.css', 'w') as f:
+    f.write(output)
 
