@@ -1,79 +1,142 @@
-import tinycss
 import CSSMediaQueryParser
 import argparse
-from sys import argv
-
-script, f = argv
-ap = argparse.ArgumentParser(description='Translate a complex css file into a valid LESS file')
-ap.add_argument('input', help='CSS file to translate.')
-ap.add_argument('output', help='CSS output file.', default='output.css', nargs='?')
-ap.add_argument('-p', '--pretty', dest='format', help='Pretty print the output file.', action='store_true')
-ap.add_argument('-m', '--map', dest='varmap', help='Path to file with variable map.')
-args = ap.parse_args()
-print args
-
-parser = CSSMediaQueryParser.CSSMediaQueryParser()
-stylesheet = parser.parse_stylesheet_file(f)
-
-dictRules = {}
-output = ''
-at_rules = ''
+import re
+import tinycss
 
 
-def add_rule (sel, declarations, obj):
-    sel = sel.strip()
-    tokens = sel.split(' ')
-    current_level = obj
+class CssToLess(object):
+    NESTED_AT_RULES = ['@media', '@page', '@keyframes', '@supports', '@document']
 
-    for item in tokens:
-        if item not in current_level:
-            current_level[item] = {}
-        current_level = current_level[item]
+    def __init__(self, f, output, pretty_print, variable_map):
+        self.set_delimiters(pretty_print)
+        self.variable_map, self.variable_regex = self.parse_variables(variable_map)
+        
+        self.less = []
+        self.at_rules = []
+        self.rules = {}
+        self.font_faces = []
 
-    for dec in declarations:
-        current_level[dec.name] = dec.value.as_css()
+        parser = CSSMediaQueryParser.CSSMediaQueryParser()
+        self.stylesheet = parser.parse_stylesheet_file(f)
+        
+        self.build_structure()
+        self.build_rules_tree()
+        self.save(output)
+        
 
-def add_media (media, rules):
-    media = '@media ' + media
+    def set_delimiters(self, pretty_print):
+        self.tab = '\t' if pretty_print else ''
+        self.open = ' {\n' if pretty_print else '{'
+        self.close = '}\n' if pretty_print else '}'
+        self.colon = ': ' if pretty_print else ':'
+        self.semi_colon = ';\n' if pretty_print else ';'
 
-    if media not in dictRules:
-        dictRules[media] = {}
+    def parse_variables(self, variable_map):
+        variable_regex = None
+        variable = None
+        if variable_map:
+            with open(variable_map) as f:
+                variable = {key.strip():value.strip() for (key, value) in [line.split(',') for line in f]}
+                variable_regex = re.compile('|'.join([re.escape(key) for key in variable.keys()]), re.M)
 
-    for rule in rules:
+        return variable, variable_regex
+
+    def build_structure(self):
+        for rule in self.stylesheet.rules:
+            if not rule.at_keyword:
+                self.add_selector(rule)
+            else:
+                self.add_at_rule(rule)
+
+    def add_selector(self, rule, at_rule = ''):
         sels = rule.selector.as_css().split(',')
         for sel in sels:
-            add_rule(sel, rule.declarations, dictRules[media])
+            self.add_rule(sel, rule.declarations, at_rule)
 
-def generate_less (obj):
-    output = ''
-    for key in obj:
-        if type(obj[key]) == dict:
-            output = output + key + '{' + generate_less(obj[key]) + '}'
+    def add_rule(self, sel, declarations, at_rule = ''):
+        sel = sel.strip()
+        tokens = sel.split()
+        current_level = self.rules if not at_rule else self.rules[at_rule]
+
+        for token in tokens:
+            if token not in current_level:
+                current_level[token] = {}
+            current_level = current_level[token]
+
+        for declaration in declarations:
+            current_level[declaration.name] = declaration.value.as_css()
+
+    def add_at_rule(self, rule):
+        if rule.at_keyword in self.NESTED_AT_RULES:
+            psuedo_selector = ' '.join([rule.at_keyword, rule.content])
+
+            if psuedo_selector not in self.rules:
+                self.rules[psuedo_selector] = {}
+
+            for child in rule.rules:
+                self.add_selector(child, psuedo_selector)
+
+        elif rule.at_keyword == '@font-face':
+            self.font_faces.append({declaration.name: declaration.value.as_css() for declaration in rule.rules})
+    
         else:
-            output = output + key + ':' + obj[key] + ';'
-    return output
+            self.at_rules.append(rule.display())
 
-def dump(obj):
-   for attr in dir(obj):
-       if hasattr( obj, attr ):
-           print( "obj.%s = %s" % (attr, getattr(obj, attr)))
+    def build_rules_tree(self, tab_count = 0, obj = {}):
+        if obj == {}:
+            obj = self.rules
+
+        for key in obj:
+            if type(obj[key]) == dict:
+                self.less.append(''.join([self.tab * tab_count, key, self.open]))
+
+                self.build_rules_tree(tab_count + 1, obj[key])
+                
+                self.less.append(''.join([self.tab * tab_count, self.close]))
+            else:
+                self.less.append(''.join([self.tab * tab_count, key, self.colon, obj[key], self.semi_colon]))
+
+    def replace_vars(self, content):
+        if not self.variable_map:
+            return content
+        else:
+            return self.variable_regex.sub(lambda x: self.variable_map[x.group(0)], content)
 
 
-for rule in stylesheet.rules:
-    if (rule.at_keyword == '@import'):
-        at_rules = at_rules + rule.at_keyword + ' "' + rule.uri + '";'
-    elif (rule.at_keyword == '@media'):
-        add_media(rule.media, rule.rules)
-    else:
-        sels = rule.selector.as_css().split(',')
+    def save(self, output):
+        with open (output, 'w') as f:
+            for key in self.variable_map.keys():
+                f.write(''.join([self.variable_map[key], self.colon, key, self.semi_colon]))
 
-        for sel in sels:
-            add_rule(sel, rule.declarations, dictRules)
+            for rule in self.at_rules:
+                f.write(self.replace_vars(''.join([rule, self.semi_colon])))
 
-output = at_rules + generate_less(dictRules)
+            for font in self.font_faces:
+                f.write(''.join(['@font-face', self.open]))
+                
+                for key in font:
+                    f.write(self.replace_vars(''.join([self.tab, key, self.colon, font[key], self.semi_colon])))
+                
+                f.write(self.close)
 
-print output
+            for item in self.less:
+                f.write(self.replace_vars(item))
 
-with open('output.css', 'w') as f:
-    f.write(output)
+            print ' '.join([output, 'saved.'])
+
+    def dump(self): # for debugging
+        for attr in dir(self):
+            if hasattr(self, attr):
+                print( "self.%s = %s" % (attr, getattr(self, attr)))
+
+if __name__ == '__main__':
+    ap = argparse.ArgumentParser(description='Translate a complex css file into a valid LESS file')
+    ap.add_argument('input', help='CSS file to translate.')
+    ap.add_argument('output', help='LESS output file.', default='output.less', nargs='?')
+    ap.add_argument('-p', '--pretty', dest='pretty_print', help='Pretty print the output file.', action='store_true')
+    ap.add_argument('-m', '--map', dest='variable_map', help='Path to file with variable map. Format: 1 variable per line, value first then variable name, comma separated.')
+    args = ap.parse_args()
+
+    ctl = CssToLess(args.input, args.output, args.pretty_print, args.variable_map)
+
 

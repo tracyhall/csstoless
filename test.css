@@ -1,4 +1,12 @@
+@namespace url(XML-namespace-URL);
+@charset "UTF-8"; 
 @import 'example.css';
+
+@font-face {
+  font-family: Gotham-Book;
+  src: url('/fonts//Gotham-BookIta.otf');
+  font-style: italic;
+}
 
 nav {
     height: 40px;
