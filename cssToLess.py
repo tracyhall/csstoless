@@ -105,8 +105,9 @@ class CssToLess(object):
 
     def save(self, output):
         with open (output, 'w') as f:
-            for key in self.variable_map.keys():
-                f.write(''.join([self.variable_map[key], self.colon, key, self.semi_colon]))
+            if self.variable_map:
+                for key in self.variable_map.keys():
+                    f.write(''.join([self.variable_map[key], self.colon, key, self.semi_colon]))
 
             for rule in self.at_rules:
                 f.write(self.replace_vars(''.join([rule, self.semi_colon])))
